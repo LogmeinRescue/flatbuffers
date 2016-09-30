@@ -217,6 +217,22 @@ class GeneralGenerator : public BaseGenerator {
   bool generate() {
     std::string one_file_code;
 
+    std::string unioncode = GenUnion();
+    if (parser_.opts.one_file) {
+      one_file_code += unioncode;
+    } else {
+      if (!SaveType("Union", *(**parser_.enums_.vec.begin()).defined_namespace,
+                  unioncode, false)) return false;
+    }
+
+    std::string buildercode = GenAbstractBuilder();
+    if (parser_.opts.one_file) {
+      one_file_code += buildercode;
+    } else {
+      if (!SaveType("AbstractBuilder", *(**parser_.enums_.vec.begin()).defined_namespace,
+                  buildercode, false)) return false;
+    }
+
     for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
          ++it) {
       std::string enumcode;
@@ -353,6 +369,245 @@ std::string GenOffsetType(const StructDef &struct_def) {
   } else {
     return "int";
   }
+}
+    
+std::string GenerateBuilder(const StructDef &struct_def) {
+
+    std::string code = "";
+    code += "  public static class Builder"+lang_.inheritance_marker+"AbstractBuilder {\n";
+
+    for (auto it = struct_def.fields.vec.begin();
+         it != struct_def.fields.vec.end(); ++it) {
+         auto &field = **it;
+
+         code += GenerateBuilderField(field);
+    }
+
+    for (auto it = struct_def.fields.vec.begin();
+         it != struct_def.fields.vec.end(); ++it) {
+         auto &field = **it;
+
+         code += GenerateBuilderMethod(field);
+    }
+
+    code += GenerateBuildMethod(struct_def);
+
+    code += "  \n}\n";
+
+    return code;
+}
+
+bool hasEnding (std::string const &fullString, std::string const &ending) {
+    if (fullString.length() >= ending.length()) {
+        return (0 == fullString.compare (fullString.length() - ending.length(), ending.length(), ending));
+    } else {
+        return false;
+    }
+}
+
+std::string GenerateBuilderField(const FieldDef &field) {
+    std::string type_name = GenTypeGet(field.value.type);
+    std::string type_name_dest = GenTypeNameDest(field.value.type);
+
+    if (hasEnding(field.name,"_type")) {
+        return "";
+    }
+
+    std::string code = "";
+
+
+    code += "    private ";
+
+    std::string type = type_name_dest;
+    if (field.value.type.base_type == BASE_TYPE_STRUCT) {
+         type += ".Builder";
+    } else if (field.value.type.base_type == BASE_TYPE_UNION) {
+        type = "Union";
+        // bb: the type name is Table if base type is UNION. The concrete enum name should be put here.
+    } 
+
+    if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+        type += ".Builder[]";
+    }
+
+    code += type;
+
+    code += " ";
+    code += field.name;
+    code += ";\n";
+
+    return code;
+}
+
+std::string GenerateBuilderMethod(const FieldDef &field) {
+    std::string type_name = GenTypeGet(field.value.type);
+    std::string type_name_dest = GenTypeNameDest(field.value.type);
+
+    if (hasEnding(field.name,"_type")) {
+        return "";
+    }
+
+    std::string code = "";
+
+    code += "\n";
+    code += "    public Builder ";
+    code += field.name;
+    code += "(";
+
+
+    std::string type = type_name_dest;
+    if (field.value.type.base_type == BASE_TYPE_STRUCT) {
+         type += ".Builder";
+    } else if (field.value.type.base_type == BASE_TYPE_UNION) {
+        type = "Union";
+        // bb: the type name is Table if base type is UNION. The concrete enum name should be put here.
+    }
+
+    if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+        type += ".Builder[]";
+    }
+
+    code += type;
+
+    code += " ";
+    code += field.name;
+    code += ")";
+    code += " {\n";
+    code += "      this."+field.name+ " = "+field.name+";\n";
+    code += "      return this;";
+
+    code += "\n    }";
+
+    return code;
+}
+
+std::string GenerateBuildMethod(const StructDef &struct_def) {
+    std::string code = "";
+    code += "\n";
+        code += "    public ";
+        code += "int";
+        code += " build";
+        code += "(";
+        code += "FlatBufferBuilder";
+        code += " ";
+        code += "builder";
+        code += ")";
+        code += " {\n";
+
+        for (size_t size = struct_def.sortbysize ? sizeof(largest_scalar_t) : 1;
+                           size;
+                           size /= 2) {
+            for (auto it = struct_def.fields.vec.rbegin();
+               it != struct_def.fields.vec.rend(); ++it) {
+              auto &field = **it;
+              if (!field.deprecated &&
+                (!struct_def.sortbysize ||
+                 size == SizeOf(field.value.type.base_type))) {
+              if (!IsScalar(field.value.type.base_type)) {
+
+                if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+                    code += "      int[] "+field.name+"Offsets = new int["+field.name+".length];\n";
+                    code += "      for (int i=0; i<"+field.name+".length; i++) {\n";
+                    code += "        "+field.name+"Offsets[i] = "+field.name+"[i].build(builder);\n";
+                    code += "      }\n";
+                }
+
+                code += "      int "+field.name+"Offset = ";
+                if (field.value.type.base_type == BASE_TYPE_STRING) {
+                  code += "builder.createString(" + field.name+");";
+                } else if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+
+                    code += "create"+MakeCamel(field.name, true)+"Vector(builder, "+field.name+"Offsets);\n";  
+                } else {
+                  std::string doBuildUsingBuilder = field.name+".build(builder)";
+                  code += field.name+" != null ? ";
+                  code += doBuildUsingBuilder;
+                  code += " : ";
+                  code += "-1";
+                  code += ";";
+                }
+                code += "\n";
+              }
+
+            }
+          }
+        }
+
+        code += "      builder.";
+        code += FunctionStart('S') + "tartObject(";
+        code += NumToString(struct_def.fields.vec.size()) + ");\n";
+
+        for (size_t size = struct_def.sortbysize ? sizeof(largest_scalar_t) : 1;
+                   size;
+                   size /= 2) {
+            for (auto it = struct_def.fields.vec.rbegin();
+               it != struct_def.fields.vec.rend(); ++it) {
+              auto &field = **it;
+              if (!field.deprecated &&
+                (!struct_def.sortbysize ||
+                 size == SizeOf(field.value.type.base_type))) {
+
+              if (!IsScalar(field.value.type.base_type)) {
+                code += "      if ("+field.name+" != null) {\n  ";
+              }
+
+              code += "      " + struct_def.name + ".";
+              code += FunctionStart('A') + "dd";
+              code += MakeCamel(field.name) + "(builder, ";
+
+              // bb: use payload's getType method
+              if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+                    code += field.name + "Offset";
+              } else if (hasEnding(field.name, "_type")) {
+                std::string def = field.name.substr(0, field.name.find("_type"));
+                code += def + ".getType()";
+              } 
+              else
+              {
+                code += field.name;
+                if (!IsScalar(field.value.type.base_type)) code += "Offset";
+              }
+
+              code += ");\n";
+              
+              if (!IsScalar(field.value.type.base_type)) {
+                code += "      }\n";
+              }
+            }
+          }
+        }
+
+        code += "      return " + struct_def.name + ".";
+        code += FunctionStart('E') + "nd" + struct_def.name;
+        code += "(builder);";
+
+        code += "\n    }";
+    return code;
+}
+
+std::string GenerateUnionVisitor(const EnumDef &enum_def) {
+  std::string code = "";
+  code += "  public static abstract class Visitor {\n";
+
+  for (auto it = enum_def.vals.vec.begin();
+       it != enum_def.vals.vec.end();
+       ++it) {
+       if (it != enum_def.vals.vec.begin())
+       {
+         auto &ev = **it;
+         std::string lowercaseArg = ""+ev.name;
+         lowercaseArg[0] = tolower(lowercaseArg[0]);
+         code += "    public void visit"+ev.name+"("+ev.name+" "+lowercaseArg+") {\n";
+       } else {
+         code += "    public void visitUnknownMessage(com.google.flatbuffers.Table payload) {\n";
+       }
+
+       code += "    }\n";
+  }
+
+  code += "  }\n";
+
+  return code;
 }
 
 std::string GenOffsetConstruct(const StructDef &struct_def,
@@ -525,6 +780,9 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
   std::string &code = *code_ptr;
   if (enum_def.generated) return;
 
+  // bb: generate union sup class - to be moved to base, instead of generate?
+
+
   // Generate enum definitions of the form:
   // public static (final) int name = value;
   // In Java, we use ints rather than the Enum feature, because we want them
@@ -532,14 +790,43 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
   // That, and Java Enums are expensive, and not universally liked.
   GenComment(enum_def.doc_comment, code_ptr, &lang_.comment_config);
   code += std::string("public ") + lang_.enum_decl + enum_def.name;
+
+  if (enum_def.is_union) {
+    code += lang_.inheritance_marker + "Union";
+  }
+
   if (lang_.language == IDLOptions::kCSharp) {
     code += lang_.inheritance_marker +
             GenTypeBasic(enum_def.underlying_type, false);
   }
   code += lang_.open_curly;
-  if (lang_.language == IDLOptions::kJava) {
-    code += "  private " + enum_def.name + "() { }\n";
+
+  if (enum_def.is_union) {
+      // bb: add type
+      code += "  private final byte "+MakeCamel("type", lang_.first_camel_upper)+";\n";
+      code += "  private final AbstractBuilder "+MakeCamel("builder", lang_.first_camel_upper)+";\n\n";
+
+      // bb: add new ctor
+      if (lang_.language == IDLOptions::kJava) {
+        code += "  private "+enum_def.name+"(byte type, AbstractBuilder builder) {\n";
+        code += "    this.type = type;\n";
+        code += "    this.builder = builder;\n";
+        code += "  }\n\n";
+      }
+
+      // bb: add gettype
+      code += "  @Override\n";
+      code += "  public byte "+MakeCamel("getType", lang_.first_camel_upper)+"() {\n";
+      code += "    return type;\n";
+      code += "  }\n\n";
+
+      // bb: add build
+      code += "  @Override\n";
+      code += "  public int "+MakeCamel("build", lang_.first_camel_upper)+"(com.google.flatbuffers.FlatBufferBuilder builder) {\n";
+      code += "    return this.builder.build(builder);\n";
+      code += "  }\n\n";
   }
+
   for (auto it = enum_def.vals.vec.begin();
        it != enum_def.vals.vec.end();
        ++it) {
@@ -553,7 +840,29 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
     code += " " + ev.name + " = ";
     code += NumToString(ev.value);
     code += lang_.enum_separator;
+
+    // bb: Add payload type wrapping method
+    if (enum_def.is_union) {
+        if (it != enum_def.vals.vec.begin()) {
+        code += "  public static "+enum_def.name+" as"+enum_def.name+"(";
+        code += ev.name + ".Builder";
+        std::string lowercaseArg = ""+enum_def.name;
+        lowercaseArg[0] = tolower(lowercaseArg[0]);
+        code += " "+lowercaseArg;
+        code += ") {\n";
+
+        code += "    return new ";
+        code += enum_def.name;
+        code += "("+ev.name+", "+lowercaseArg+");\n";
+
+        code += "  }\n\n";
+        }
+    }
   }
+
+
+
+
 
   // Generate a generate string table for enum values.
   // We do not do that for C# where this functionality is native.
@@ -589,11 +898,33 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
     }
   }
 
+  // Generate visitor
+  if (enum_def.is_union)
+  {
+    code += GenerateUnionVisitor(enum_def);
+  }
   // Close the class
   code += "}";
   // Java does not need the closing semi-colon on class definitions.
   code += (lang_.language != IDLOptions::kJava) ? ";" : "";
   code += "\n\n";
+}
+
+std::string GenUnion() {
+  std::string code = "public abstract class Union { \n";
+  code += "  public abstract byte getType();\n";
+  code += "  public abstract int build(com.google.flatbuffers.FlatBufferBuilder builder);\n";
+  code += "}";
+
+  return code;
+}
+
+std::string GenAbstractBuilder() {
+  std::string code = "public abstract class AbstractBuilder { \n";
+  code += "  public abstract int build(com.google.flatbuffers.FlatBufferBuilder builder);\n";
+  code += "}";
+
+  return code;
 }
 
 // Returns the function name that is able to read a value of the given type.
@@ -905,6 +1236,43 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
         method_start += "<TTable>";
         type_name = type_name_dest;
       }
+
+      // bb: generate accept method for union
+      std::string ucase = MakeCamel(field.name, true);
+      code += "  public void "+MakeCamel("accept"+ucase, lang_.first_camel_upper)+"Visitor("+ucase+".Visitor visitor) {\n";
+      code += "    switch("+field.name+"Type()) {\n";
+      EnumDef& enum_def = *field.value.type.enum_def;
+
+      for (auto it = enum_def.vals.vec.begin();
+             it != enum_def.vals.vec.end();
+             ++it) {
+
+            auto &ev = **it;
+            std::string lowercaseArg = ""+ev.name;
+            lowercaseArg[0] = tolower(lowercaseArg[0]);
+            code += "      case "+ucase+"."+ev.name+":\n";
+
+            std::string ident = "        ";
+            if (it != enum_def.vals.vec.begin())
+            {
+              std::string localVariableName = lowercaseArg + ucase;
+              code += ident + ev.name + " "+ localVariableName +" = new "+ev.name+"();\n";
+              code += ident + field.name + "(" + localVariableName + ");"+"\n";
+              code += ident +"visitor.visit"+ev.name+"("+localVariableName+");";
+            } else {
+              code += ident + "visitor.visitUnknownMessage("+field.name+"(new Table()));";
+            }
+
+            code += "\n";
+            code += "        break;";
+
+            code += "    \n";
+        }
+
+      code += "    }\n";
+      code += "  }\n";
+
+
     }
     std::string getter = dest_cast + GenGetter(field.value.type);
     code += method_start;
@@ -1208,6 +1576,9 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
     code += "(FlatBufferBuilder builder) { builder.";
     code += FunctionStart('S') + "tartObject(";
     code += NumToString(struct_def.fields.vec.size()) + "); }\n";
+
+    code += GenerateBuilder(struct_def);
+
     for (auto it = struct_def.fields.vec.begin();
          it != struct_def.fields.vec.end(); ++it) {
       auto &field = **it;
