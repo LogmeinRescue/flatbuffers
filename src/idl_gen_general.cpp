@@ -415,9 +415,6 @@ std::string GenerateBuilderField(const FieldDef &field) {
 
     std::string code = "";
 
-
-    code += "    private ";
-
     std::string type = type_name_dest;
     if (field.value.type.base_type == BASE_TYPE_STRUCT) {
          type += ".Builder";
@@ -803,12 +800,12 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
 
   if (enum_def.is_union) {
       // bb: add type
-      code += "  private final byte "+MakeCamel("type", lang_.first_camel_upper)+";\n";
-      code += "  private final AbstractBuilder "+MakeCamel("builder", lang_.first_camel_upper)+";\n\n";
+      code += "  " + lang_.const_decl +" byte "+MakeCamel("type", lang_.first_camel_upper)+";\n";
+      code += "  " + lang_.const_decl +"AbstractBuilder "+MakeCamel("builder", lang_.first_camel_upper)+";\n\n";
 
       // bb: add new ctor
       if (lang_.language == IDLOptions::kJava) {
-        code += "  private "+enum_def.name+"(byte type, AbstractBuilder builder) {\n";
+        code += "  "+enum_def.name+"(byte type, AbstractBuilder builder) {\n";
         code += "    this.type = type;\n";
         code += "    this.builder = builder;\n";
         code += "  }\n\n";
@@ -1132,7 +1129,7 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
   if (lang_.language == IDLOptions::kCSharp) {
     code += " : IFlatbufferObject";
     code += lang_.open_curly;
-    code += "  private ";
+    code += "  ";
     code += struct_def.fixed ? "Struct" : "Table";
     code += " __p;\n";
   } else {
