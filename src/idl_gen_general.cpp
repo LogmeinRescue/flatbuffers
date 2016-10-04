@@ -358,7 +358,9 @@ std::string GenOffsetType(const StructDef &struct_def) {
 std::string GenerateBuilder(const StructDef &struct_def) {
 
     std::string code = "";
-    code += "  public static class Builder"+lang_.inheritance_marker+"AbstractBuilder {\n";
+    code += "  public static class Builder";
+    code += lang_.inheritance_marker;
+    code += "AbstractBuilder {\n";
 
     for (auto it = struct_def.fields.vec.begin();
          it != struct_def.fields.vec.end(); ++it) {
@@ -772,7 +774,8 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
   code += std::string("public ") + lang_.enum_decl + enum_def.name;
 
   if (enum_def.is_union) {
-    code += lang_.inheritance_marker + "Union";
+    code += lang_.inheritance_marker;
+    code += "Union";
   }
 
   if (lang_.language == IDLOptions::kCSharp) {
