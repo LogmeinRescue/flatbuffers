@@ -97,6 +97,7 @@ struct LanguageParameters {
   const char *static_class_marker;
   const char *override_marker;
   const char *override_modifier;
+  const char *virtual_marker;
   CommentConfig comment_config;
 };
 
@@ -126,6 +127,7 @@ LanguageParameters language_parameters[] = {
     " static",
     "@Override",
     " ",
+    "",
     {
       "/**",
       " *",
@@ -156,6 +158,7 @@ LanguageParameters language_parameters[] = {
     "",
     "",
     " override",
+    " virtual",
     {
       nullptr,
       "///",
@@ -188,6 +191,7 @@ LanguageParameters language_parameters[] = {
     "",
     "",
     " ",
+    "",
     {
       nullptr,
       "///",
@@ -529,8 +533,14 @@ std::string GenerateBuildMethod(const StructDef &struct_def) {
 
                 if (field.value.type.base_type == BASE_TYPE_VECTOR) {
                     code += "      ";
-                    code += "int";
-                    code += "[] ";      
+
+                    if (lang_.language == IDLOptions::kCSharp) {
+                      code += "Offset<"+GenTypeNameDest(field.value.type)+">[] ";  
+                    } else {
+                      code += "int";
+                      code += "[] ";        
+                    }
+                    
                     code += field.name+"Offsets = new ";
 
                     if(lang_.language == IDLOptions::kCSharp)
@@ -547,7 +557,17 @@ std::string GenerateBuildMethod(const StructDef &struct_def) {
                     code += "      for (int i=0; i<"+field.name+".";
                     code += MakeCamel("length", lang_.first_camel_upper);
                     code += "; i++) {\n";
-                    code += "        "+field.name+"Offsets[i] = "+field.name+"[i]."+GenBuildMethodName()+"(builder);\n";
+
+                    std::string buildStatement = field.name+"[i]."+GenBuildMethodName()+"(builder)";
+
+                    if(lang_.language == IDLOptions::kCSharp) {
+                      std::string csharpbuildStatement = "new Offset<"+GenTypeNameDest(field.value.type)+">"+"(";
+                      csharpbuildStatement += buildStatement;
+                      csharpbuildStatement += ")";
+                      buildStatement = csharpbuildStatement;
+                    }
+
+                    code += "        "+field.name+"Offsets[i] = "+buildStatement+";\n";
                     code += "      }\n";
                 }
 
@@ -562,7 +582,11 @@ std::string GenerateBuildMethod(const StructDef &struct_def) {
                   code += field.name;
                   code += ");";
                 } else if (field.value.type.base_type == BASE_TYPE_VECTOR) {
-                  code += "int";// GenVectorOffsetType();
+                  if(lang_.language == IDLOptions::kCSharp) {
+                    code += "VectorOffset";// GenVectorOffsetType();
+                  } else {
+                    code += "int";// GenVectorOffsetType();
+                  }
                   code += " ";
                   code += field.name+"Offset = ";
 
@@ -610,7 +634,9 @@ std::string GenerateBuildMethod(const StructDef &struct_def) {
 
               if (lang_.language == IDLOptions::kCSharp 
                 && !IsScalar(field.value.type.base_type) 
-                && field.value.type.base_type != BASE_TYPE_UNION) {
+                && field.value.type.base_type != BASE_TYPE_UNION
+                && field.value.type.base_type != BASE_TYPE_VECTOR
+                && field.value.type.base_type != BASE_TYPE_STRING) {
                 code += "new Offset<";
                 code += GenTypeNameDest(field.value.type);
                 code += ">("; 
@@ -633,7 +659,9 @@ std::string GenerateBuildMethod(const StructDef &struct_def) {
 
               if (lang_.language == IDLOptions::kCSharp 
                   && !IsScalar(field.value.type.base_type)
-                  && field.value.type.base_type != BASE_TYPE_UNION) {
+                  && field.value.type.base_type != BASE_TYPE_UNION
+                  && field.value.type.base_type != BASE_TYPE_VECTOR
+                  && field.value.type.base_type != BASE_TYPE_STRING) {
                 code += ")";
               }
 
@@ -678,11 +706,15 @@ std::string GenerateUnionVisitor(const EnumDef &enum_def) {
          auto &ev = **it;
          std::string lowercaseArg = ""+ev.name;
          lowercaseArg[0] = tolower(lowercaseArg[0]);
-         code += "    public void ";
+         code += "    public";
+         code += lang_.virtual_marker;
+         code += " void ";
          code += MakeCamel("visit", lang_.first_camel_upper);
          code += ev.name+"("+ev.name+" "+lowercaseArg+") {\n";
        } else {
-         code += "    public void "+MakeCamel("visitUnknownMessage", lang_.first_camel_upper)+"(Table payload) {\n";
+         code += "    public";
+         code += lang_.virtual_marker;
+         code += " void "+MakeCamel("visitUnknownMessage", lang_.first_camel_upper)+"(Table payload) {\n";
        }
 
        code += "    }\n";
