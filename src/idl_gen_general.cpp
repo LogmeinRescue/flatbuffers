@@ -977,6 +977,8 @@ void GenEnum(EnumDef &enum_def, std::string *code_ptr) {
 
         if (lang_.language == IDLOptions::kCSharp) {
           codeOfHelper += helperMethod;
+        } else {
+          code += helperMethod;
         }
     }
   }
