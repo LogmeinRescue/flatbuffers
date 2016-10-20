@@ -434,7 +434,7 @@ std::string GenerateBuilderField(const FieldDef &field) {
     } 
 
     if (field.value.type.base_type == BASE_TYPE_VECTOR) {
-        type += ".Builder[]";
+      type += GenBuilderVectorType(field);
     }
 
     code += type;
@@ -444,6 +444,16 @@ std::string GenerateBuilderField(const FieldDef &field) {
     code += ";\n";
 
     return code;
+}
+
+std::string GenBuilderVectorType(const FieldDef &field) {
+    std::string type;
+    if (IsScalar(field.value.type.element)) {
+      type += "[]";
+    } else {
+      type += ".Builder[]";
+    }
+    return type;
 }
 
 std::string GenUnionTypeParameter(const FieldDef &field) {
@@ -487,7 +497,7 @@ std::string GenerateBuilderMethod(const FieldDef &field) {
     }
 
     if (field.value.type.base_type == BASE_TYPE_VECTOR) {
-        type += ".Builder[]";
+        type += GenBuilderVectorType(field);
     }
 
     code += type;
@@ -558,7 +568,10 @@ std::string GenerateBuildMethod(const StructDef &struct_def) {
                     code += MakeCamel("length", lang_.first_camel_upper);
                     code += "; i++) {\n";
 
-                    std::string buildStatement = field.name+"[i]."+GenBuildMethodName()+"(builder)";
+                    std::string buildStatement = field.name+"[i]";
+                    if (!IsScalar(field.value.type.element)) {
+                      buildStatement += "."+GenBuildMethodName()+"(builder)";
+                    }
 
                     if(lang_.language == IDLOptions::kCSharp) {
                       std::string csharpbuildStatement = "new Offset<"+GenTypeNameDest(field.value.type)+">"+"(";
