@@ -56,6 +56,10 @@ struct LanguageParameters {
   std::string optional_suffix;
   std::string includes;
   std::string class_annotation;
+  std::string static_class_marker;
+  std::string override_marker;
+  std::string override_modifier;
+  std::string virtual_marker;
   CommentConfig comment_config;
 };
 
@@ -88,6 +92,10 @@ const LanguageParameters &GetLangParams(IDLOptions::Language lang) {
         "import java.nio.*;\nimport java.lang.*;\nimport "
         "java.util.*;\nimport com.google.flatbuffers.*;\n",
         "\n@SuppressWarnings(\"unused\")\n",
+        " static",
+        "@Override",
+            "",
+            "",
         {
             "/**",
             " *",
@@ -120,6 +128,10 @@ const LanguageParameters &GetLangParams(IDLOptions::Language lang) {
         "?",
         "using global::System;\nusing global::FlatBuffers;\n\n",
         "",
+        "",
+        "",
+        " override",
+        " virtual",
         {
             nullptr,
             "///",
@@ -149,6 +161,22 @@ class GeneralGenerator : public BaseGenerator {
   bool generate() {
     std::string one_file_code;
     cur_name_space_ = parser_.current_namespace_;
+
+    std::string unioncode = GenUnion();
+    if (parser_.opts.one_file) {
+      one_file_code += unioncode;
+    } else {
+      if (!SaveType("Union", *(**parser_.enums_.vec.begin()).defined_namespace,
+                      unioncode, false)) return false;
+    }
+
+    std::string buildercode = GenAbstractBuilder();
+    if (parser_.opts.one_file) {
+      one_file_code += buildercode;
+    } else {
+      if (!SaveType("AbstractBuilder", *(**parser_.enums_.vec.begin()).defined_namespace,
+                      buildercode, false)) return false;
+    }
 
     for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
          ++it) {
@@ -325,6 +353,373 @@ class GeneralGenerator : public BaseGenerator {
     }
   }
 
+  std::string GenerateBuilder(const StructDef &struct_def) const {
+
+      std::string code = "";
+      code += "  public";
+      code += lang_.static_class_marker;
+      code += " class Builder";
+      code += lang_.inheritance_marker;
+      code += "AbstractBuilder";
+
+      code +=" {\n";
+
+      for (auto it = struct_def.fields.vec.begin();
+           it != struct_def.fields.vec.end(); ++it) {
+           auto &field = **it;
+
+           code += GenerateBuilderField(field);
+      }
+
+      for (auto it = struct_def.fields.vec.begin();
+           it != struct_def.fields.vec.end(); ++it) {
+           auto &field = **it;
+
+           code += GenerateBuilderMethod(field);
+      }
+
+      code += GenerateBuildMethod(struct_def);
+
+      code += "  \n}\n";
+
+      return code;
+  }
+
+  bool hasEnding (std::string const &fullString, std::string const &ending) const {
+      if (fullString.length() >= ending.length()) {
+          return (0 == fullString.compare (fullString.length() - ending.length(), ending.length(), ending));
+      } else {
+          return false;
+      }
+  }
+
+  std::string GenerateBuilderField(const FieldDef &field) const {
+      std::string type_name = GenTypeGet(field.value.type);
+      std::string type_name_dest = GenTypeNameDest(field.value.type);
+
+      if (hasEnding(field.name,"_type")) {
+          return "";
+      }
+
+      std::string code = "";
+
+
+      code += "    private ";
+
+      std::string type = type_name_dest;
+      if (field.value.type.base_type == BASE_TYPE_STRUCT) {
+           type += ".Builder";
+      } else if (field.value.type.base_type == BASE_TYPE_UNION) {
+          type = "Union";
+          type += GenUnionTypeParameter(field);
+          // bb: the type name is Table if base type is UNION. The concrete enum name should be put here.
+      }
+
+      if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+        type += GenBuilderVectorType(field);
+      }
+
+      code += type;
+
+      code += " ";
+      code += field.name;
+      code += ";\n";
+
+      return code;
+  }
+
+  std::string GenBuilderVectorType(const FieldDef &field) const {
+      std::string type;
+      if (IsScalar(field.value.type.element)) {
+        type += "[]";
+      } else {
+        type += ".Builder[]";
+      }
+      return type;
+  }
+
+  std::string GenUnionTypeParameter(const FieldDef &field) const {
+    if (lang_.language == IDLOptions::kCSharp) {
+      return "<" + MakeCamel(field.name, true) + ">"; // FIXME
+    } else {
+      return "";
+    }
+  }
+
+  std::string GenerateBuilderMethod(const FieldDef &field) const {
+      std::string type_name = GenTypeGet(field.value.type);
+      std::string type_name_dest = GenTypeNameDest(field.value.type);
+
+      if (hasEnding(field.name,"_type")) {
+          return "";
+      }
+
+      std::string code = "";
+
+      code += "\n";
+      code += "    public Builder ";
+
+      if (lang_.language == IDLOptions::kCSharp) {
+        // bb: add prefix for C# where
+        code += "With";
+      }
+
+      code += MakeCamel(field.name, lang_.first_camel_upper);
+      code += "(";
+
+
+      std::string type = type_name_dest;
+      if (field.value.type.base_type == BASE_TYPE_STRUCT) {
+           type += ".Builder";
+      } else if (field.value.type.base_type == BASE_TYPE_UNION) {
+          type = "Union";
+
+          type += GenUnionTypeParameter(field);
+          // bb: the type name is Table if base type is UNION. The concrete enum name should be put here.
+      }
+
+      if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+          type += GenBuilderVectorType(field);
+      }
+
+      code += type;
+
+      code += " ";
+      code += field.name;
+      code += ")";
+      code += " {\n";
+      code += "      this."+field.name+ " = "+field.name+";\n";
+      code += "      return this;";
+
+      code += "\n    }";
+
+      return code;
+  }
+
+  std::string GenerateBuildMethod(const StructDef &struct_def) const {
+      std::string code = "";
+      code += "\n";
+          code += "    public";
+          code += lang_.override_modifier;
+          code += " ";
+          code += "int";
+          code += " ";
+          code += GenBuildMethodName();
+          code += "(";
+          code += "FlatBufferBuilder";
+          code += " ";
+          code += "builder";
+          code += ")";
+          code += " {\n";
+
+          for (size_t size = struct_def.sortbysize ? sizeof(largest_scalar_t) : 1;
+                             size;
+                             size /= 2) {
+              for (auto it = struct_def.fields.vec.rbegin();
+                 it != struct_def.fields.vec.rend(); ++it) {
+                auto &field = **it;
+                if (!field.deprecated &&
+                  (!struct_def.sortbysize ||
+                   size == SizeOf(field.value.type.base_type))) {
+                if (!IsScalar(field.value.type.base_type)) {
+
+                  if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+                      code += "      ";
+
+                      if (lang_.language == IDLOptions::kCSharp) {
+                        code += "Offset<"+GenTypeNameDest(field.value.type)+">[] ";
+                      } else {
+                        code += "int";
+                        code += "[] ";
+                      }
+
+                      code += field.name+"Offsets = new ";
+
+                      if(lang_.language == IDLOptions::kCSharp)
+                      {
+                        code += "Offset<"+GenTypeNameDest(field.value.type)+">";
+                      }
+                      else
+                      {
+                        code += "int";
+                      }
+
+                      code += "["+field.name+".";
+                      code += MakeCamel("length];\n", lang_.first_camel_upper);
+                      code += "      for (int i=0; i<"+field.name+".";
+                      code += MakeCamel("length", lang_.first_camel_upper);
+                      code += "; i++) {\n";
+
+                      std::string buildStatement = field.name+"[i]";
+                      if (!IsScalar(field.value.type.element)) {
+                        buildStatement += "."+GenBuildMethodName()+"(builder)";
+                      }
+
+                      if(lang_.language == IDLOptions::kCSharp) {
+                        std::string csharpbuildStatement = "new Offset<"+GenTypeNameDest(field.value.type)+">"+"(";
+                        csharpbuildStatement += buildStatement;
+                        csharpbuildStatement += ")";
+                        buildStatement = csharpbuildStatement;
+                      }
+
+                      code += "        "+field.name+"Offsets[i] = "+buildStatement+";\n";
+                      code += "      }\n";
+                  }
+
+                  code += "      ";
+
+                  if (field.value.type.base_type == BASE_TYPE_STRING) {
+                    code += GenStringOffsetType();
+                    code += " ";
+                    code += field.name+"Offset = ";
+                    code += "builder.";
+                    code += MakeCamel("createString(", lang_.first_camel_upper);
+                    code += field.name;
+                    code += ");";
+                  } else if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+                    if(lang_.language == IDLOptions::kCSharp) {
+                      code += "VectorOffset";// GenVectorOffsetType();
+                    } else {
+                      code += "int";// GenVectorOffsetType();
+                    }
+                    code += " ";
+                    code += field.name+"Offset = ";
+
+                    code += MakeCamel("create", lang_.first_camel_upper);
+                    code += MakeCamel(field.name, true)+"Vector(builder, "+field.name+"Offsets);\n";
+                  } else {
+                    code += "int";//GenVectorOffsetType();
+                    code += " ";
+                    code += field.name+"Offset = ";
+                    std::string doBuildUsingBuilder = field.name+"."+GenBuildMethodName()+"(builder)";
+                    code += field.name+" != null ? ";
+                    code += doBuildUsingBuilder;
+                    code += " : ";
+                    code += "-1";
+                    code += ";";
+                  }
+                  code += "\n";
+                }
+
+              }
+            }
+          }
+
+          code += "      builder.";
+          code += FunctionStart('S') + "tartObject(";
+          code += NumToString(struct_def.fields.vec.size()) + ");\n";
+
+          for (size_t size = struct_def.sortbysize ? sizeof(largest_scalar_t) : 1;
+                     size;
+                     size /= 2) {
+              for (auto it = struct_def.fields.vec.rbegin();
+                 it != struct_def.fields.vec.rend(); ++it) {
+                auto &field = **it;
+                if (!field.deprecated &&
+                  (!struct_def.sortbysize ||
+                   size == SizeOf(field.value.type.base_type))) {
+
+                if (!IsScalar(field.value.type.base_type)) {
+                  code += "      if ("+field.name+" != null) {\n  ";
+                }
+
+                code += "      " + struct_def.name + ".";
+                code += FunctionStart('A') + "dd";
+                code += MakeCamel(field.name) + "(builder, ";
+
+                if (lang_.language == IDLOptions::kCSharp
+                  && !IsScalar(field.value.type.base_type)
+                  && field.value.type.base_type != BASE_TYPE_UNION
+                  && field.value.type.base_type != BASE_TYPE_VECTOR
+                  && field.value.type.base_type != BASE_TYPE_STRING) {
+                  code += "new Offset<";
+                  code += GenTypeNameDest(field.value.type);
+                  code += ">(";
+                }
+
+                // bb: use payload's getType method
+                if (field.value.type.base_type == BASE_TYPE_VECTOR) {
+                      code += field.name + "Offset";
+                } else if (hasEnding(field.name, "_type")) {
+                  std::string def = field.name.substr(0, field.name.find("_type"));
+                  code += def + "."+GenGetUnionTypeByteMethodName()+"()";
+                }
+                else
+                {
+                  code += field.name;
+                  if (!IsScalar(field.value.type.base_type)) {
+                    code += "Offset";
+                  }
+                }
+
+                if (lang_.language == IDLOptions::kCSharp
+                    && !IsScalar(field.value.type.base_type)
+                    && field.value.type.base_type != BASE_TYPE_UNION
+                    && field.value.type.base_type != BASE_TYPE_VECTOR
+                    && field.value.type.base_type != BASE_TYPE_STRING) {
+                  code += ")";
+                }
+
+                code += ");\n";
+
+                if (!IsScalar(field.value.type.base_type)) {
+                  code += "      }\n";
+                }
+              }
+            }
+          }
+
+          code += "      return " + struct_def.name + ".";
+          code += FunctionStart('E') + "nd" + struct_def.name;
+          code += "(builder)";
+
+          if (lang_.language == IDLOptions::kCSharp) {
+            code += ".Value";
+          }
+
+          code += ";";
+
+          code += "\n    }";
+      return code;
+  }
+
+  std::string GenerateUnionVisitor(const EnumDef &enum_def) const {
+    std::string code = "";
+    code += "  public";
+    code += lang_.static_class_marker;
+    code += " abstract class ";
+    if (lang_.language == IDLOptions::kCSharp) {
+      code += enum_def.name;
+    }
+    code += "Visitor {\n";
+
+    for (auto it = enum_def.vals.vec.begin();
+         it != enum_def.vals.vec.end();
+         ++it) {
+         if (it != enum_def.vals.vec.begin())
+         {
+           auto &ev = **it;
+           std::string lowercaseArg = ""+ev.name;
+           lowercaseArg[0] = tolower(lowercaseArg[0]);
+           code += "    public";
+           code += lang_.virtual_marker;
+           code += " void ";
+           code += MakeCamel("visit", lang_.first_camel_upper);
+           code += ev.name+"("+ev.name+" "+lowercaseArg+") {\n";
+         } else {
+           code += "    public";
+           code += lang_.virtual_marker;
+           code += " void "+MakeCamel("visitUnknownMessage", lang_.first_camel_upper)+"(Table payload) {\n";
+         }
+
+         code += "    }\n";
+    }
+
+    code += "  }\n";
+
+    return code;
+  }
+
   std::string GenOffsetConstruct(const StructDef &struct_def,
                                  const std::string &variable_name) const {
     if (lang_.language == IDLOptions::kCSharp) {
@@ -332,6 +727,14 @@ class GeneralGenerator : public BaseGenerator {
              variable_name + ")";
     }
     return variable_name;
+  }
+
+  std::string GenStringOffsetType() const {
+    if(lang_.language == IDLOptions::kCSharp) {
+      return "StringOffset";
+    } else {
+      return "int";
+    }
   }
 
   std::string GenVectorOffsetType() const {
@@ -498,6 +901,10 @@ class GeneralGenerator : public BaseGenerator {
     std::string &code = *code_ptr;
     if (enum_def.generated) return;
 
+    code += lang_.includes;
+
+    // bb: generate union sup class - to be moved to base, instead of generate?
+
     // Generate enum definitions of the form:
     // public static (final) int name = value;
     // In Java, we use ints rather than the Enum feature, because we want them
@@ -505,14 +912,36 @@ class GeneralGenerator : public BaseGenerator {
     // That, and Java Enums are expensive, and not universally liked.
     GenComment(enum_def.doc_comment, code_ptr, &lang_.comment_config);
     code += std::string("public ") + lang_.enum_decl + enum_def.name;
+
+
+    if (lang_.language != IDLOptions::kCSharp && enum_def.is_union) {
+      code += lang_.inheritance_marker;
+      code += "Union";
+    }
+
     if (lang_.language == IDLOptions::kCSharp) {
       code += lang_.inheritance_marker +
               GenTypeBasic(enum_def.underlying_type, false);
     }
     code += lang_.open_curly;
-    if (lang_.language == IDLOptions::kJava) {
-      code += "  private " + enum_def.name + "() { }\n";
+
+    std::string postFix = lang_.language == IDLOptions::kCSharp ? "Union" : "";
+
+    std::string codeOfHelper = "public class "+enum_def.name+postFix+lang_.inheritance_marker+"Union";
+
+    if (lang_.language == IDLOptions::kCSharp) {
+      codeOfHelper += "<" + enum_def.name + ">";
     }
+
+    codeOfHelper += " {\n";
+    if (enum_def.is_union) {
+        if (lang_.language == IDLOptions::kCSharp) {
+          codeOfHelper += GenMembersForUnion(enum_def, postFix);
+        } else {
+          code += GenMembersForUnion(enum_def, "");
+        }
+    }
+
     for (auto it = enum_def.vals.vec.begin(); it != enum_def.vals.vec.end();
          ++it) {
       auto &ev = **it;
@@ -525,7 +954,35 @@ class GeneralGenerator : public BaseGenerator {
       code += " " + ev.name + " = ";
       code += NumToString(ev.value);
       code += lang_.enum_separator;
+
+    // bb: Add payload type wrapping method
+      if (enum_def.is_union) {
+        std::string helperMethod = "";
+        if (it != enum_def.vals.vec.begin()) {
+          helperMethod += "  public static "+enum_def.name+postFix+" as"+enum_def.name+postFix+"(";
+          helperMethod += ev.name + ".Builder";
+          std::string lowercaseArg = ""+enum_def.name;
+          lowercaseArg[0] = tolower(lowercaseArg[0]);
+          helperMethod += " "+lowercaseArg;
+          helperMethod += ") {\n";
+
+          helperMethod += "    return new ";
+          helperMethod += enum_def.name;
+          helperMethod += postFix;
+          helperMethod += "("+enum_def.name+"."+ev.name+", "+lowercaseArg+");\n";
+
+          helperMethod += "  }\n\n";
+        }
+
+        if (lang_.language == IDLOptions::kCSharp) {
+          codeOfHelper += helperMethod;
+        } else {
+          code += helperMethod;
+        }
+      }
     }
+
+    codeOfHelper += "}";
 
     // Generate a generate string table for enum values.
     // We do not do that for C# where this functionality is native.
@@ -561,11 +1018,121 @@ class GeneralGenerator : public BaseGenerator {
       }
     }
 
+    // Generate visitor
+    if (enum_def.is_union && lang_.language != IDLOptions::kCSharp)
+    {
+      code += GenerateUnionVisitor(enum_def);
+    }
     // Close the class
     code += "}";
+
+    if (enum_def.is_union && lang_.language == IDLOptions::kCSharp)
+    {
+      code += codeOfHelper;
+      code += GenerateUnionVisitor(enum_def);
+    }
     // Java does not need the closing semi-colon on class definitions.
     code += (lang_.language != IDLOptions::kJava) ? ";" : "";
     code += "\n\n";
+  }
+
+  std::string GenMembersForUnion(EnumDef &enum_def, std::string postFix) const {
+    std::string code = "";
+
+
+    std::string name_of_type = "";
+    if (lang_.language == IDLOptions::kCSharp) {
+      name_of_type = enum_def.name;
+    } else {
+      name_of_type = "byte";
+    }
+
+    // bb: add type
+    code += "  private "+name_of_type+" "+MakeCamel("type", lang_.first_camel_upper)+";\n";
+    code += "  private AbstractBuilder "+MakeCamel("builder", lang_.first_camel_upper)+";\n\n";
+
+    // bb: add new ctor
+    code += "  private "+enum_def.name+postFix+"("+name_of_type+" type, AbstractBuilder builder) {\n";
+    code += "    this."+MakeCamel("type", lang_.first_camel_upper)+" = type;\n";
+    code += "    this."+MakeCamel("builder", lang_.first_camel_upper)+" = builder;\n";
+    code += "  }\n\n";
+
+    // bb: add gettype
+    code += "  ";
+    code += lang_.override_marker;
+    code += "\n";
+    code += "  public";
+    code += lang_.override_modifier;
+    code += " "+name_of_type+" "+GenGetUnionTypeByteMethodName()+"() {\n";
+    code += "    return ";
+    code += MakeCamel("type", lang_.first_camel_upper);
+    code += ";\n";
+    code += "  }\n\n";
+
+    // bb: add build
+    code += "  ";
+    code += lang_.override_marker;
+    code += "\n";
+    code += "  public";
+    code += lang_.override_modifier;
+    code += " int ";
+    code += GenBuildMethodName();
+    code += "(FlatBufferBuilder builder) {\n";
+    code += "    return this.";
+    code += MakeCamel("builder", lang_.first_camel_upper);
+    code += "."+GenBuildMethodName()+"(builder);\n";
+    code += "  }\n\n";
+    return code;
+  }
+
+  std::string GenUnion() {
+    std::string code = "";
+    code += lang_.includes;
+    code += "public abstract class Union";
+    if (lang_.language == IDLOptions::kCSharp) {
+      code += "<T>";
+    }
+    code += " { \n";
+    code += "  public abstract ";
+
+    if (lang_.language == IDLOptions::kCSharp) {
+      code += "T";
+    } else {
+      code += "byte";
+    }
+
+    code += " ";
+    code += GenGetUnionTypeByteMethodName()+"();\n";
+    code += "  public abstract int ";
+    code += GenBuildMethodName();
+    code += "(FlatBufferBuilder builder);\n";
+    code += "}";
+
+    return code;
+  }
+
+  std::string GenGetUnionTypeByteMethodName() const {
+    return MakeCamel("getUnionType", lang_.first_camel_upper);
+  }
+
+  std::string GenAbstractBuilder() {
+    std::string code = "";
+    code += lang_.includes;
+    code += "public abstract class AbstractBuilder";
+
+    code += " { \n";
+    code += "  public abstract ";
+    code += "int";
+
+    code += " "+GenBuildMethodName();
+    code += "(FlatBufferBuilder builder);\n";
+    code += "}";
+
+    return code;
+  }
+
+  std::string GenBuildMethodName() const {
+    return MakeCamel("build", lang_.first_camel_upper);
   }
 
   // Returns the function name that is able to read a value of the given type.
@@ -898,7 +1465,56 @@ class GeneralGenerator : public BaseGenerator {
           method_start += "<TTable>";
           type_name = type_name_dest;
         }
+        // bb: generate accept method for union
+        std::string ucase = MakeCamel(field.name, true);
+        std::string visitor_type_name = ucase;
+        visitor_type_name += lang_.language == IDLOptions::kCSharp ? "" : ".";
+        visitor_type_name += "Visitor";
+
+        code += "  public void "+MakeCamel("accept"+ucase, lang_.first_camel_upper)+"Visitor("+visitor_type_name+" visitor) {\n";
+        code += "    switch("+MakeCamel(field.name, lang_.first_camel_upper)+"Type";
+        code += lang_.language == IDLOptions::kCSharp ? "" : "()";
+        code += ") {\n";
+        EnumDef& enum_def = *field.value.type.enum_def;
+
+        for (auto it = enum_def.vals.vec.begin();
+          it != enum_def.vals.vec.end();
+          ++it) {
+
+          auto &ev = **it;
+          std::string lowercaseArg = ""+ev.name;
+          lowercaseArg[0] = tolower(lowercaseArg[0]);
+          code += "      case "+ucase+"."+ev.name+":\n";
+
+          std::string ident = "        ";
+          if (it != enum_def.vals.vec.begin())
+          {
+            std::string localVariableName = lowercaseArg + ucase;
+            code += ident + ev.name + " "+ localVariableName +" = new "+ev.name+"();\n";
+
+            code += ident;
+            code += lang_.language == IDLOptions::kCSharp ? MakeCamel("get", lang_.first_camel_upper) : "";
+            code += MakeCamel(field.name, lang_.first_camel_upper) + "(" + localVariableName + ");"+"\n";
+
+            code += ident +"visitor.";
+            code += MakeCamel("visit", lang_.first_camel_upper);
+
+            code += ev.name;//code += MakeCamel(GenTypeBasic(field.value.type, false));//GenGetter(field.value.type);//ev.name; // LOFASZ
+
+            code += "("+localVariableName+");";
+          } else {
+            code += ident + "visitor."+MakeCamel("visitUnknownMessage", lang_.first_camel_upper)+"(null);";
+          }
+
+          code += "\n";
+          code += "        break;";
+
+          code += "    \n";
+        }
+        code += "    }\n";
+        code += "  }\n";
       }
+
       std::string getter = dest_cast + GenGetter(field.value.type);
       code += method_start;
       std::string default_cast = "";
@@ -1250,6 +1866,9 @@ class GeneralGenerator : public BaseGenerator {
       code += "(FlatBufferBuilder builder) { builder.";
       code += FunctionStart('S') + "tartObject(";
       code += NumToString(struct_def.fields.vec.size()) + "); }\n";
+
+      code += GenerateBuilder(struct_def);
+
       for (auto it = struct_def.fields.vec.begin();
            it != struct_def.fields.vec.end(); ++it) {
         auto &field = **it;
