@@ -3,17 +3,36 @@ buildDir='gradle-build'
 apply plugin: 'java'
 apply plugin: 'maven-publish'
 
+version = '1.8.0-SNAPSHOT'
+
 publishing {
     publications {
         mavenJava(MavenPublication) {
 			groupId 'com.google.flatbuffers'
             artifactId 'flatbuffers-java-fluent'
-            version '1.8.0-SNAPSHOT'
+            version project.version
 
             from components.java
 
          	artifact sourceJar {
                 classifier "sources"
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name 'artifactory'
+
+            if (project.version.endsWith('-SNAPSHOT')) {
+                url "${System.getenv('ARTIFACTORY_URL')}/libs-snapshot-local"
+            } else {
+                url "${System.getenv('ARTIFACTORY_URL')}/libs-release-local"
+            }
+
+            credentials {
+                username "${System.getenv('ARTIFACTORY_PUBLISH_USER')}"
+                password "${System.getenv('ARTIFACTORY_PUBLISH_PASSWORD')}"
             }
         }
     }
