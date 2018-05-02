@@ -683,13 +683,13 @@ class GeneralGenerator : public BaseGenerator {
          if (it != enum_def.vals.vec.begin())
          {
            auto &ev = **it;
-           std::string lowercaseArg = ""+ev.name;
+           std::string lowercaseArg = GenShortNameOfEnum(ev);
            lowercaseArg[0] = tolower(lowercaseArg[0]);
            code += "    public";
            code += lang_.virtual_marker;
            code += " void ";
            code += GenVisitorMethodName(ev);
-           code += "("+ev.name+" "+lowercaseArg+") {\n";
+           code += "("+FqdnOfEnumVal(ev)+" "+lowercaseArg+") {\n";
          } else {
            code += "    public";
            code += lang_.virtual_marker;
@@ -935,7 +935,11 @@ class GeneralGenerator : public BaseGenerator {
         code += lang_.const_decl;
         code += GenTypeBasic(enum_def.underlying_type, false);
       }
-      code += " " + ev.name + " = ";
+
+      code += " ";
+      code += GenShortNameOfEnum(ev);
+      code +=  " = ";
+
       code += NumToString(ev.value);
       code += lang_.enum_separator;
 
@@ -943,8 +947,11 @@ class GeneralGenerator : public BaseGenerator {
       if (enum_def.is_union) {
         std::string helperMethod = "";
         if (it != enum_def.vals.vec.begin()) {
-          helperMethod += "  public static "+enum_def.name+postFix+" as"+enum_def.name+postFix+"(";
-          helperMethod += ev.name + ".Builder";
+
+
+          helperMethod += "  public static "+enum_def.name+postFix+" as"+postFix+"(";
+
+          helperMethod += FqdnOfEnumVal(ev) + ".Builder";
           std::string lowercaseArg = ""+enum_def.name;
           lowercaseArg[0] = tolower(lowercaseArg[0]);
           helperMethod += " "+lowercaseArg;
@@ -953,7 +960,7 @@ class GeneralGenerator : public BaseGenerator {
           helperMethod += "    return new ";
           helperMethod += enum_def.name;
           helperMethod += postFix;
-          helperMethod += "("+enum_def.name+"."+ev.name+", "+lowercaseArg+");\n";
+          helperMethod += "("+enum_def.name+"."+ GenShortNameOfEnum(ev)+", "+lowercaseArg+");\n";
 
           helperMethod += "  }\n\n";
         }
@@ -1018,6 +1025,30 @@ class GeneralGenerator : public BaseGenerator {
     // Java does not need the closing semi-colon on class definitions.
     code += (lang_.language != IDLOptions::kJava) ? ";" : "";
     code += "\n\n";
+  }
+
+  std::string GenShortNameOfEnum(EnumVal ev) const {
+    if (ev.union_type.struct_def != NULL) {
+      return ev.union_type.struct_def->name;
+    } else {
+      return ev.name;
+    }
+
+  }
+
+  std::string FqdnOfEnumVal(EnumVal ev) const {
+    std::string name = ev.name;
+    findAndReplace(name, "_", ".");
+    return name;
+  }
+
+  void findAndReplace(std::string& source, std::string const& find, std::string const& replace) const
+  {
+    for(std::string::size_type i = 0; (i = source.find(find, i)) != std::string::npos;)
+    {
+      source.replace(i, find.length(), replace);
+      i += replace.length();
+    }
   }
 
   std::string GenMembersForUnion(EnumDef &enum_def, std::string postFix) const {
@@ -1272,9 +1303,9 @@ class GeneralGenerator : public BaseGenerator {
   }
 
 
-  std::string GenVisitorMethodName(EnumVal enum_def) const {
+  std::string GenVisitorMethodName(EnumVal ev) const {
     std::string methodName = MakeCamel("visit", lang_.first_camel_upper);
-    methodName += enum_def.name;
+    methodName += GenShortNameOfEnum(ev);
     return methodName;
   }
 
@@ -1417,7 +1448,7 @@ class GeneralGenerator : public BaseGenerator {
         // bb: generate accept method for union
         std::string visited_type_name = field.value.type.enum_def->name;
 
-        code += "  public void "+MakeCamel("accept"+visited_type_name, lang_.first_camel_upper)+"Visitor("+visited_type_name+" visitor) {\n";
+        code += "  public void "+MakeCamel("accept"+visited_type_name, lang_.first_camel_upper)+"Visitor("+visited_type_name+".Visitor visitor) {\n";
         code += "    switch("+MakeCamel(field.name, lang_.first_camel_upper)+"Type";
         code += lang_.language == IDLOptions::kCSharp ? "" : "()";
         code += ") {\n";
@@ -1428,15 +1459,15 @@ class GeneralGenerator : public BaseGenerator {
           ++it) {
 
           auto &ev = **it;
-          std::string lowercaseArg = ""+ev.name;
+          std::string lowercaseArg = GenShortNameOfEnum(ev);
           lowercaseArg[0] = tolower(lowercaseArg[0]);
-          code += "      case "+visited_type_name+"."+ev.name+":\n";
+          code += "      case "+visited_type_name+"."+GenShortNameOfEnum(ev)+":\n";
 
           std::string ident = "        ";
           if (it != enum_def.vals.vec.begin())
           {
-            std::string localVariableName = lowercaseArg + visited_type_name;
-            code += ident + ev.name + " "+ localVariableName +" = new "+ev.name+"();\n";
+            std::string localVariableName = lowercaseArg;
+            code += ident + FqdnOfEnumVal(ev) + " "+ localVariableName +" = new "+FqdnOfEnumVal(ev)+"();\n";
 
             code += ident;
             code += lang_.language == IDLOptions::kCSharp ? MakeCamel("get", lang_.first_camel_upper) : "";
