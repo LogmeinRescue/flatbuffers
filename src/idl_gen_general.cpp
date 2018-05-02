@@ -162,22 +162,6 @@ class GeneralGenerator : public BaseGenerator {
     std::string one_file_code;
     cur_name_space_ = parser_.current_namespace_;
 
-    std::string unioncode = GenUnion();
-    if (parser_.opts.one_file) {
-      one_file_code += unioncode;
-    } else {
-      if (!SaveType("Union", *(**parser_.enums_.vec.begin()).defined_namespace,
-                      unioncode, false)) return false;
-    }
-
-    std::string buildercode = GenAbstractBuilder();
-    if (parser_.opts.one_file) {
-      one_file_code += buildercode;
-    } else {
-      if (!SaveType("AbstractBuilder", *(**parser_.enums_.vec.begin()).defined_namespace,
-                      buildercode, false)) return false;
-    }
-
     for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
          ++it) {
       std::string enumcode;
@@ -704,12 +688,12 @@ class GeneralGenerator : public BaseGenerator {
            code += "    public";
            code += lang_.virtual_marker;
            code += " void ";
-           code += MakeCamel("visit", lang_.first_camel_upper);
-           code += ev.name+"("+ev.name+" "+lowercaseArg+") {\n";
+           code += GenVisitorMethodName(ev);
+           code += "("+ev.name+" "+lowercaseArg+") {\n";
          } else {
            code += "    public";
            code += lang_.virtual_marker;
-           code += " void "+MakeCamel("visitUnknownMessage", lang_.first_camel_upper)+"(Table payload) {\n";
+           code += " void "+MakeCamel("visitUnknown"+enum_def.name, lang_.first_camel_upper)+"(Table payload) {\n";
          }
 
          code += "    }\n";
@@ -1085,50 +1069,8 @@ class GeneralGenerator : public BaseGenerator {
     return code;
   }
 
-  std::string GenUnion() {
-    std::string code = "";
-    code += lang_.includes;
-    code += "public abstract class Union";
-    if (lang_.language == IDLOptions::kCSharp) {
-      code += "<T>";
-    }
-    code += " { \n";
-    code += "  public abstract ";
-
-    if (lang_.language == IDLOptions::kCSharp) {
-      code += "T";
-    } else {
-      code += "byte";
-    }
-
-    code += " ";
-    code += GenGetUnionTypeByteMethodName()+"();\n";
-    code += "  public abstract int ";
-    code += GenBuildMethodName();
-    code += "(FlatBufferBuilder builder);\n";
-    code += "}";
-
-    return code;
-  }
-
   std::string GenGetUnionTypeByteMethodName() const {
     return MakeCamel("getUnionType", lang_.first_camel_upper);
-  }
-
-  std::string GenAbstractBuilder() {
-    std::string code = "";
-    code += lang_.includes;
-    code += "public abstract class AbstractBuilder";
-
-    code += " { \n";
-    code += "  public abstract ";
-    code += "int";
-
-    code += " "+GenBuildMethodName();
-    code += "(FlatBufferBuilder builder);\n";
-    code += "}";
-
-    return code;
   }
 
   std::string GenBuildMethodName() const {
@@ -1329,6 +1271,13 @@ class GeneralGenerator : public BaseGenerator {
     return key_getter;
   }
 
+
+  std::string GenVisitorMethodName(EnumVal enum_def) const {
+    std::string methodName = MakeCamel("visit", lang_.first_camel_upper);
+    methodName += enum_def.name;
+    return methodName;
+  }
+
   void GenStruct(StructDef &struct_def, std::string *code_ptr) const {
     if (struct_def.generated) return;
     std::string &code = *code_ptr;
@@ -1466,12 +1415,9 @@ class GeneralGenerator : public BaseGenerator {
           type_name = type_name_dest;
         }
         // bb: generate accept method for union
-        std::string ucase = MakeCamel(field.name, true);
-        std::string visitor_type_name = ucase;
-        visitor_type_name += lang_.language == IDLOptions::kCSharp ? "" : ".";
-        visitor_type_name += "Visitor";
+        std::string visited_type_name = field.value.type.enum_def->name;
 
-        code += "  public void "+MakeCamel("accept"+ucase, lang_.first_camel_upper)+"Visitor("+visitor_type_name+" visitor) {\n";
+        code += "  public void "+MakeCamel("accept"+visited_type_name, lang_.first_camel_upper)+"Visitor("+visited_type_name+" visitor) {\n";
         code += "    switch("+MakeCamel(field.name, lang_.first_camel_upper)+"Type";
         code += lang_.language == IDLOptions::kCSharp ? "" : "()";
         code += ") {\n";
@@ -1484,12 +1430,12 @@ class GeneralGenerator : public BaseGenerator {
           auto &ev = **it;
           std::string lowercaseArg = ""+ev.name;
           lowercaseArg[0] = tolower(lowercaseArg[0]);
-          code += "      case "+ucase+"."+ev.name+":\n";
+          code += "      case "+visited_type_name+"."+ev.name+":\n";
 
           std::string ident = "        ";
           if (it != enum_def.vals.vec.begin())
           {
-            std::string localVariableName = lowercaseArg + ucase;
+            std::string localVariableName = lowercaseArg + visited_type_name;
             code += ident + ev.name + " "+ localVariableName +" = new "+ev.name+"();\n";
 
             code += ident;
@@ -1497,13 +1443,14 @@ class GeneralGenerator : public BaseGenerator {
             code += MakeCamel(field.name, lang_.first_camel_upper) + "(" + localVariableName + ");"+"\n";
 
             code += ident +"visitor.";
-            code += MakeCamel("visit", lang_.first_camel_upper);
 
-            code += ev.name;//code += MakeCamel(GenTypeBasic(field.value.type, false));//GenGetter(field.value.type);//ev.name; // LOFASZ
+
+            code += GenVisitorMethodName(ev);
+
 
             code += "("+localVariableName+");";
           } else {
-            code += ident + "visitor."+MakeCamel("visitUnknownMessage", lang_.first_camel_upper)+"(null);";
+            code += ident + "visitor."+MakeCamel("visitUnknown"+visited_type_name, lang_.first_camel_upper)+"(null);";
           }
 
           code += "\n";

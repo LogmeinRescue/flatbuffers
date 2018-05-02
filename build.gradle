@@ -1,0 +1,32 @@
+buildDir='gradle-build'
+
+apply plugin: 'java'
+apply plugin: 'maven-publish'
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+			groupId 'com.google.flatbuffers'
+            artifactId 'flatbuffers-java-fluent'
+            version '1.8.0-SNAPSHOT'
+
+            from components.java
+
+         	artifact sourceJar {
+                classifier "sources"
+            }
+        }
+    }
+}
+
+task sourceJar(type: Jar) {
+    from sourceSets.main.allJava
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir 'java'
+        }
+    }
+}
